@@ -1,0 +1,66 @@
+name: Validate branch and commits
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate branch and commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate branch name
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$HEAD_REF" == "chore/crm-delivery-workflow" ]]; then
+            echo "Временное исключение для существующего PR настройки."
+            exit 0
+          fi
+
+          pattern='^(feature|fix|bugfix|hotfix|chore|docs|refactor)/[0-9]+-[a-z0-9]+(-[a-z0-9]+)*$'
+          if [[ ! "$HEAD_REF" =~ $pattern ]]; then
+            echo "::error::Неверное название ветки: $HEAD_REF"
+            echo "::error::Формат: <тип>/<номер-issue>-<короткое-название>"
+            echo "::error::Типы: feature, fix, bugfix, hotfix, chore, docs, refactor"
+            echo "::error::Пример: feature/123-payment-status"
+            exit 1
+          fi
+
+      - name: Validate commit messages
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$HEAD_REF" == "chore/crm-delivery-workflow" ]]; then
+            echo "Временное исключение для существующего PR настройки."
+            exit 0
+          fi
+
+          pattern='^(feat|fix|chore|docs|refactor|test|ci|build|perf)(\([a-z0-9._/-]+\))?!?: .{8,} (#[0-9]+|Marwa-Tour/[A-Za-z0-9._-]+#[0-9]+)$'
+          failed=0
+
+          while IFS= read -r subject; do
+            if [[ ! "$subject" =~ $pattern ]]; then
+              echo "::error::Неверный commit: $subject"
+              failed=1
+            fi
+          done < <(git log --format='%s' "origin/$BASE_REF..HEAD")
+
+          if [[ "$failed" -ne 0 ]]; then
+            echo "::error::Формат: <тип>: <описание минимум 8 символов> #<номер>"
+            echo "::error::Типы: feat, fix, chore, docs, refactor, test, ci, build, perf"
+            echo "::error::Пример: fix: исправить повторную отправку #456"
+            exit 1
+          fi
