@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+
+exec "$(git rev-parse --show-toplevel)/.github/scripts/validate-git-conventions.sh" commit-msg "$1"
