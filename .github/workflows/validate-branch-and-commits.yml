@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   validate:
@@ -19,7 +20,7 @@ jobs:
 
       - name: Validate branch name
         env:
-          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
 
@@ -39,8 +40,8 @@ jobs:
 
       - name: Validate commit messages
         env:
-          HEAD_REF: ${{ github.head_ref }}
-          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
 
@@ -65,3 +66,50 @@ jobs:
             echo "::error::Пример: fix: исправить повторную отправку #456"
             exit 1
           fi
+
+  approval:
+    name: Require current approval
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check pull request approval
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pullRequest = context.payload.pull_request;
+            const reviews = await github.paginate(
+              github.rest.pulls.listReviews,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pullRequest.number,
+                per_page: 100,
+              },
+            );
+
+            const latestReviewByUser = new Map();
+            for (const review of reviews) {
+              if (!review.user || !review.submitted_at) continue;
+              const previous = latestReviewByUser.get(review.user.login);
+              if (
+                !previous ||
+                new Date(review.submitted_at) > new Date(previous.submitted_at)
+              ) {
+                latestReviewByUser.set(review.user.login, review);
+              }
+            }
+
+            const approvals = [...latestReviewByUser.values()].filter(
+              (review) =>
+                review.state === "APPROVED" &&
+                review.user.login !== pullRequest.user.login &&
+                review.commit_id === pullRequest.head.sha,
+            );
+
+            if (approvals.length === 0) {
+              core.setFailed(
+                "Требуется хотя бы одно актуальное одобрение Pull Request другим участником.",
+              );
+              return;
+            }
+
+            core.info(`Pull Request одобрен: ${approvals[0].user.login}`);
